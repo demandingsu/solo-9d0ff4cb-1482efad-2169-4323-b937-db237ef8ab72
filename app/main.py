@@ -1,18 +1,19 @@
-"""FastAPI 路由与页面。"""
+"""FastAPI 路由与页面：外字号稿次管理。"""
 from __future__ import annotations
 
 import csv
 import io
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import FastAPI, File, Header, UploadFile
+from fastapi import FastAPI, File, Header, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import service
 from .errors import DomainError
-from .parsers import parse_library_csv, parse_volume_csv
+from .parsers import parse_legacy_csv, parse_list_csv, parse_mapping_csv
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 SAMPLES_DIR = Path(__file__).resolve().parent.parent / "samples"
@@ -25,12 +26,13 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="古籍制版字模工位管理",
+    title="古籍制版 · 外字号稿次管理",
     description=(
-        "上传分册用字表与按优先顺序排列的字库清单；每字取第一个收录它的字库，"
-        "按字库、版次、字模号识别字模；交印出增减单，支持并发生效次序与原单复用。"
+        "按册名与正整数稿次分别接收排版组外字号清单与校勘组对照表；"
+        "两表可先后到达、待补提示；齐全且编号唯一对应单字且稿次更高时整稿启用；"
+        "交印只读取当时启用稿的完整用字。"
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -48,92 +50,92 @@ def health():
     return {"status": "ok"}
 
 
-# ---------- 上传 ----------
+# ---------- 两份 CSV 上传 ----------
 
 
-@app.post("/api/libraries", summary="上传（替换）按优先顺序排列的字库清单")
-async def upload_libraries(file: UploadFile = File(...)):
-    data = await file.read()
-    rows = parse_library_csv(data)
-    return service.replace_libraries(rows)
+@app.post(
+    "/api/volumes/{volume_name}/drafts/{draft_no}/list",
+    summary="上传某册某稿次的外字号清单（排版组，每行一个外字号）",
+)
+async def upload_list(volume_name: str, draft_no: int, file: UploadFile = File(...)):
+    codes = parse_list_csv(await file.read())
+    return service.upload_list(volume_name, draft_no, codes)
 
 
-@app.post("/api/volumes/{volume_name}/chars", summary="上传（替换）某册用字表")
-async def upload_volume_chars(volume_name: str, file: UploadFile = File(...)):
-    data = await file.read()
-    chars = parse_volume_csv(data)
-    return service.replace_volume_chars(volume_name, chars)
+@app.post(
+    "/api/volumes/{volume_name}/drafts/{draft_no}/mapping",
+    summary="上传某册某稿次的对照表（校勘组，每行外字号与单字）",
+)
+async def upload_mapping(volume_name: str, draft_no: int, file: UploadFile = File(...)):
+    pairs = parse_mapping_csv(await file.read())
+    return service.upload_mapping(volume_name, draft_no, pairs)
+
+
+@app.post(
+    "/api/volumes/{volume_name}/legacy",
+    summary="原用字表上传（仅适用于尚未启用外字稿的分册）",
+)
+async def upload_legacy(volume_name: str, file: UploadFile = File(...)):
+    content, char_count = parse_legacy_csv(await file.read())
+    return service.upload_legacy(volume_name, content, char_count)
 
 
 # ---------- 交印 ----------
 
 
-@app.post("/api/volumes/{volume_name}/submit", summary="交印一册并生成增减单")
-async def submit(
+@app.post("/api/volumes/{volume_name}/print", summary="交印：读取当时启用稿的完整用字")
+async def print_volume(
     volume_name: str,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     x_fail_commit: str | None = Header(default=None, alias="X-Fail-Commit"),
 ):
     fail = (x_fail_commit or "").lower() in ("1", "true", "yes")
-    return service.submit_volume(volume_name, idempotency_key, fail_commit=fail)
+    return service.print_volume(volume_name, fail_commit=fail)
 
 
-# ---------- 单据 ----------
-
-
-@app.get("/api/orders", summary="按生效次序列出全部交印单")
-def orders(volume: str | None = None):
-    return service.list_orders(volume)
-
-
-@app.get("/api/orders/{order_no}", summary="按单号原样重取增减单（JSON）")
-def order_detail(order_no: str):
-    return service.get_order(order_no)
-
-
-def _order_csv(payload: dict) -> str:
+@app.get(
+    "/api/volumes/{volume_name}/print/download",
+    summary="下载当前启用稿完整用字 CSV（带 BOM，Excel 直开）",
+)
+def print_download(volume_name: str):
+    payload = service.print_volume(volume_name)
     buf = io.StringIO()
     buf.write("﻿")
     w = csv.writer(buf)
-    w.writerow([f"增减单号 {payload['order_no']}（册：{payload['volume']}，生效时间：{payload['effective_at']}）"])
-    w.writerow(["类型", "字库", "版次", "字模号", "字"])
-    for x in payload["added"]:
-        w.writerow(["增", x["library_name"], x["edition"], x["matrix_no"], x["glyph_char"]])
-    for x in payload["removed"]:
-        w.writerow(["减", x["library_name"], x["edition"], x["matrix_no"], x["glyph_char"]])
-    w.writerow([])
-    w.writerow([f"交印前共需 {len(payload['pool_before'])} 个，交印后共需 {len(payload['pool_after'])} 个"])
-    return buf.getvalue()
-
-
-@app.get("/api/orders/{order_no}/download", summary="下载增减单 CSV")
-def order_download(order_no: str):
-    payload = service.get_order(order_no)
-    csv_text = _order_csv(payload)
+    w.writerow([
+        f"交印单 {payload['job_id']}（册：{payload['volume']}，"
+        f"启用稿次：{payload['active_draft_no']}，交印时间：{payload['printed_at']}）"
+    ])
+    w.writerow(["外字号", "字"])
+    for item in payload["items"]:
+        w.writerow([item["code"], item["glyph_char"]])
+    filename = f"print-{quote(volume_name)}-draft{payload['active_draft_no']}.csv"
     return Response(
-        content=csv_text.encode("utf-8"),
+        content=buf.getvalue().encode("utf-8"),
         media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="{order_no}.csv"'
+            "Content-Disposition": (
+                f"attachment; filename=print-draft{payload['active_draft_no']}.csv; "
+                f"filename*=UTF-8''{filename}"
+            )
         },
     )
 
 
-# ---------- 状态 ----------
+# ---------- 状态与清空 ----------
 
 
-@app.get("/api/state", summary="查看当前各册用字、已选字模与共需并集")
+@app.get("/api/state", summary="查看各册当前启用稿次、各稿待补情况与启用稿完整用字")
 def state():
     return service.get_state()
 
 
-@app.post("/api/reset", summary="清空全部数据（演示用）")
+@app.post("/api/reset", summary="演示清空：清除所有外字稿与原用字表")
 def reset():
     service.reset_all()
     return {"status": "reset"}
 
 
-# ---------- 网页 ----------
+# ---------- 网页与样例 ----------
 
 
 @app.get("/", include_in_schema=False)
@@ -141,5 +143,4 @@ def index():
     return FileResponse(WEB_DIR / "index.html")
 
 
-# 静态示例文件
 app.mount("/samples", StaticFiles(directory=str(SAMPLES_DIR)), name="samples")

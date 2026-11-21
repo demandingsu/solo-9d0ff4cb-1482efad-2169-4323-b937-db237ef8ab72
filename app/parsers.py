@@ -1,26 +1,23 @@
-"""用字表 / 字库清单 CSV 解析。"""
+"""外字号清单 / 对照表 CSV 解析。
+
+排版组交《外字号清单》：每行一个外字号（表头“外字号”，兼容无表头）。
+校勘组交《对照表》：每行外字号 + 对应单字（表头“外字号,字”，必须有表头）。
+同一编号在不同稿里可能代表不同的字，因此两份表均按 (册, 稿次) 分别收。
+"""
 from __future__ import annotations
 
 import csv
 import io
-from dataclasses import dataclass
 
 from .errors import DomainError
 
-# 允许的列名（含常见别名）
-LIBRARY_ALIASES = {
-    "library": ("字库", "字库名", "字库名称", "library", "library_name"),
-    "edition": ("版次", "edition", "version"),
-    "matrix_no": ("字模号", "字模编号", "matrix_no", "matrix", "code"),
-    "glyph_char": ("字", "用字", "字符", "glyph", "char", "character"),
-}
-VOLUME_ALIASES = {
-    "glyph_char": ("字", "用字", "字符", "glyph", "char", "character"),
-}
+LIST_ALIASES = ("外字号", "外字编号", "编号", "code", "matrix_no", "no")
+MAP_CODE_ALIASES = ("外字号", "外字编号", "编号", "code", "matrix_no", "no")
+MAP_CHAR_ALIASES = ("字", "单字", "用字", "字符", "glyph", "char", "character")
 
 
 def decode_bytes(data: bytes) -> str:
-    """优先 UTF-8（含 BOM），回退 GBK；全空按空文件处理。"""
+    """优先 UTF-8（含 BOM），回退 GB18030；全空按空文件处理。"""
     for enc in ("utf-8-sig", "gb18030"):
         try:
             return data.decode(enc)
@@ -30,113 +27,100 @@ def decode_bytes(data: bytes) -> str:
 
 
 def _normalize(header: str) -> str:
-    return header.strip().lstrip("﻿").lower()
+    return (header or "").strip().lstrip("﻿").lower()
 
 
-def _map_headers(fieldnames, aliases: dict[str, tuple[str, ...]]) -> dict[str, int]:
-    normalized = [_normalize(h or "") for h in fieldnames]
-    mapping: dict[str, int] = {}
-    for key, names in aliases.items():
-        for name in names:
-            needle = name.lower()
-            if needle in normalized:
-                mapping[key] = normalized.index(needle)
-                break
-    return mapping
+def _find_column(fieldnames: list[str], aliases: tuple[str, ...]) -> int | None:
+    normalized = [_normalize(h) for h in fieldnames]
+    for name in aliases:
+        needle = name.lower()
+        if needle in normalized:
+            return normalized.index(needle)
+    return None
 
 
-@dataclass
-class LibraryRow:
-    library: str
-    edition: str
-    matrix_no: str
-    glyph_char: str
-
-
-@dataclass
-class VolumeRow:
-    glyph_char: str
-
-
-def parse_library_csv(data: bytes) -> list[LibraryRow]:
-    text = decode_bytes(data)
+def _read_rows(text: str) -> list[list[str]]:
     reader = csv.reader(io.StringIO(text))
-    try:
-        header = next(reader)
-    except StopIteration:
-        raise DomainError("字库清单为空")
-    mapping = _map_headers(header, LIBRARY_ALIASES)
-    missing = [k for k in ("library", "edition", "matrix_no", "glyph_char") if k not in mapping]
-    if missing:
-        raise DomainError(
-            "字库清单缺少必需列: " + ", ".join(missing)
-            + "；表头需含 字库/版次/字模号/字"
-        )
-    rows: list[LibraryRow] = []
-    seen: set[tuple[str, str, str]] = set()
-    for line_no, raw in enumerate(reader, start=2):
-        if not raw or all(not c.strip() for c in raw):
-            continue
-        try:
-            row = LibraryRow(
-                library=raw[mapping["library"]].strip(),
-                edition=raw[mapping["edition"]].strip(),
-                matrix_no=raw[mapping["matrix_no"]].strip(),
-                glyph_char=raw[mapping["glyph_char"]].strip(),
-            )
-        except IndexError:
-            raise DomainError(f"字库清单第 {line_no} 行列数不足")
-        if not (row.library and row.edition and row.matrix_no and row.glyph_char):
-            raise DomainError(f"字库清单第 {line_no} 行存在空值")
-        if len(row.glyph_char) != 1:
-            raise DomainError(f"字库清单第 {line_no} 行的“字”必须是单个字符: {row.glyph_char!r}")
-        key = (row.library, row.edition, row.matrix_no)
-        if key in seen:
-            raise DomainError(
-                f"字库清单第 {line_no} 行字模号重复: {row.library}/{row.edition}/{row.matrix_no}"
-            )
-        seen.add(key)
-        rows.append(row)
+    return [row for row in reader if row and any(c.strip() for c in row)]
+
+
+def parse_list_csv(data: bytes) -> list[str]:
+    """外字号清单 → 按文件顺序去重后的外字号列表。
+
+    有“外字号”表头时按列读取；没有表头时把每行首格当作一个外字号。
+    """
+    text = decode_bytes(data)
+    rows = _read_rows(text)
     if not rows:
-        raise DomainError("字库清单没有数据行")
-    return rows
+        raise DomainError("外字号清单为空")
+
+    first = rows[0]
+    idx = _find_column(first, LIST_ALIASES)
+    codes: list[str] = []
+    data_rows = rows[1:] if idx is not None else rows
+    if idx is None:
+        idx = 0
+    for line_no, raw in enumerate(data_rows, start=2 if idx is not None else 1):
+        if idx >= len(raw):
+            raise DomainError(f"外字号清单第 {line_no} 行列数不足")
+        code = raw[idx].strip()
+        if not code:
+            raise DomainError(f"外字号清单第 {line_no} 行存在空外字号")
+        if code not in codes:
+            codes.append(code)
+    if not codes:
+        raise DomainError("外字号清单没有任何数据行")
+    return codes
 
 
-def parse_volume_csv(data: bytes) -> list[str]:
-    """返回按文件顺序去重后的用字列表。"""
+def parse_mapping_csv(data: bytes) -> list[tuple[str, str]]:
+    """对照表 → (外字号, 单字) 行列表，保留文件顺序；编号与单字均不允许重复。"""
     text = decode_bytes(data)
-    reader = csv.reader(io.StringIO(text))
-    try:
-        header = next(reader)
-    except StopIteration:
-        raise DomainError("用字表为空")
-    mapping = _map_headers(header, VOLUME_ALIASES)
-    if "glyph_char" not in mapping:
-        # 兼容无表头、每行一个字的写法
-        chars: list[str] = []
-        for raw in [header] + list(reader):
-            token = (raw[0] if raw else "").strip()
-            if token:
-                chars.extend(list(token.replace(" ", "")))
-        if not chars:
-            raise DomainError("用字表为空，或缺少“字/字符”列")
-    else:
-        idx = mapping["glyph_char"]
-        chars = []
-        for line_no, raw in enumerate(reader, start=2):
-            if not raw or all(not c.strip() for c in raw):
-                continue
-            token = raw[idx].strip()
-            if not token:
-                continue
-            # 单元格内允许多个字连写
-            chars.extend(list(token.replace(" ", "")))
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for ch in chars:
-        if ch not in seen:
-            seen.add(ch)
-            ordered.append(ch)
-    if not ordered:
-        raise DomainError("用字表没有任何字")
-    return ordered
+    rows = _read_rows(text)
+    if not rows:
+        raise DomainError("对照表为空")
+
+    header = rows[0]
+    code_idx = _find_column(header, MAP_CODE_ALIASES)
+    char_idx = _find_column(header, MAP_CHAR_ALIASES)
+    if code_idx is None or char_idx is None:
+        raise DomainError("对照表缺少必需列，表头需含 外字号,字")
+
+    pairs: list[tuple[str, str]] = []
+    seen_codes: set[str] = set()
+    seen_chars: set[str] = set()
+    for line_no, raw in enumerate(rows[1:], start=2):
+        if code_idx >= len(raw) or char_idx >= len(raw):
+            raise DomainError(f"对照表第 {line_no} 行列数不足")
+        code = raw[code_idx].strip()
+        char = raw[char_idx].strip().replace(" ", "")
+        if not code or not char:
+            raise DomainError(f"对照表第 {line_no} 行存在空值")
+        if len(char) != 1:
+            raise DomainError(f"对照表第 {line_no} 行的“字”必须是单个字符: {char!r}")
+        if code in seen_codes:
+            raise DomainError(f"对照表第 {line_no} 行外字号重复: {code}")
+        if char in seen_chars:
+            raise DomainError(f"对照表第 {line_no} 行单字重复: {char}（一个字只能对应一个外字号）")
+        seen_codes.add(code)
+        seen_chars.add(char)
+        pairs.append((code, char))
+    if not pairs:
+        raise DomainError("对照表没有任何数据行")
+    return pairs
+
+
+def parse_legacy_csv(data: bytes) -> tuple[str, int]:
+    """原用字表：兼容有/无表头，按单元格收字（一格可多字），返回 (全文, 字数)。"""
+    text = decode_bytes(data)
+    rows = _read_rows(text)
+    if not rows:
+        raise DomainError("原用字表为空")
+    start = 1 if _find_column(rows[0], MAP_CHAR_ALIASES) is not None else 0
+    chars: list[str] = []
+    for raw in rows[start:]:
+        for cell in raw:
+            chars.extend(list(cell.strip().replace(" ", "")))
+    if not chars:
+        raise DomainError("原用字表没有任何字")
+    return "".join(chars), len(chars)

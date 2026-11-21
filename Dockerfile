@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    MATRIX_DB_PATH=/data/matrix.db
+    GLYPH_DB_PATH=/data/glyph.db
 
 WORKDIR /app
 

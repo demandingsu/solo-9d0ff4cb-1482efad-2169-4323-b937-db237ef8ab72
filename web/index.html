@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>古籍制版 · 字模工位管理</title>
+<title>古籍制版 · 外字号稿次管理</title>
 <style>
   :root { --ink:#2b2620; --sub:#7a6f61; --line:#ddd6cb; --bg:#f7f4ee; --card:#fffdf8;
-          --accent:#8a5a2b; --green:#2e7d4f; --red:#b03a2e; }
+          --accent:#8a5a2b; --green:#2e7d4f; --red:#b03a2e; --amber:#9a6a1f; }
   * { box-sizing: border-box; }
   body { margin:0; font-family: "Noto Serif SC","Songti SC","SimSun",serif;
          background:var(--bg); color:var(--ink); }
@@ -14,25 +14,26 @@
   header h1 { margin:0; font-size:24px; letter-spacing:2px; }
   header p { margin:6px 0 0; color:var(--sub); font-size:13px; }
   main { max-width:1180px; margin:0 auto; padding:22px; display:grid;
-         grid-template-columns: 380px 1fr; gap:20px; }
+         grid-template-columns: 400px 1fr; gap:20px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px;
           padding:18px; margin-bottom:18px; }
   .card h2 { margin:0 0 12px; font-size:17px; border-left:4px solid var(--accent);
              padding-left:8px; }
   label { display:block; font-size:13px; color:var(--sub); margin:10px 0 4px; }
-  input[type=text], input[type=file] { width:100%; padding:8px; font-size:13px;
-         border:1px solid var(--line); border-radius:5px; background:#fff; }
+  input[type=text], input[type=number], input[type=file] { width:100%; padding:8px;
+         font-size:13px; border:1px solid var(--line); border-radius:5px; background:#fff; }
   button { margin-top:12px; padding:9px 18px; border:0; border-radius:5px;
            background:var(--accent); color:#fff; font-size:14px; cursor:pointer;
            font-family:inherit; letter-spacing:1px; }
   button:hover { opacity:.88; }
   button.ghost { background:#fff; color:var(--accent); border:1px solid var(--accent); }
   table { width:100%; border-collapse:collapse; font-size:13px; }
-  th,td { border:1px solid var(--line); padding:6px 8px; text-align:left; }
+  th,td { border:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
   th { background:#f0e9dd; }
   .tag { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; }
-  .tag.add { background:#e3f2e8; color:var(--green); }
-  .tag.del { background:#fbe5e2; color:var(--red); }
+  .tag.active { background:#e3f2e8; color:var(--green); }
+  .tag.pending { background:#fdf3e0; color:var(--amber); }
+  .tag.superseded { background:#ece7df; color:var(--sub); }
   .muted { color:var(--sub); font-size:12px; }
   .msg { margin-top:10px; padding:10px; border-radius:5px; font-size:13px;
          white-space:pre-wrap; display:none; }
@@ -41,80 +42,84 @@
   pre { background:#2b2620; color:#f0e9dd; padding:12px; border-radius:6px;
         font-size:12px; overflow:auto; max-height:360px; }
   .vol { border:1px dashed var(--line); border-radius:6px; padding:10px; margin-bottom:10px; }
-  .vol h3 { margin:0 0 6px; font-size:14px; }
-  .chars { font-size:15px; letter-spacing:3px; line-height:1.8; }
+  .vol h3 { margin:0 0 6px; font-size:15px; }
+  .chars { font-size:16px; letter-spacing:3px; line-height:1.8; }
   a { color:var(--accent); }
-  .right { text-align:right; }
+  .row { display:flex; gap:10px; }
+  .row > div { flex:1; }
   @media (max-width: 900px) { main { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>古籍制版 · 字模工位管理</h1>
-  <p>分册用字表 × 优先字库清单 · 每字取第一个收录它的字库 · 交印逐单出增减单 · 原单可重取</p>
+  <h1>古籍制版 · 外字号稿次管理</h1>
+  <p>按册名与正整数稿次分别接收外字号清单（排版组）与对照表（校勘组）·
+     两表可先后到达、缺件提示 · 齐全且编号唯一对应单字且稿次更高时整稿启用 · 交印只读启用稿</p>
 </header>
 <main>
   <div>
     <div class="card">
-      <h2>① 字库清单（按优先顺序）</h2>
-      <p class="muted">CSV 列：字库,版次,字模号,字。全量替换当前生效清单。
-        <a href="/samples/libraries.csv" target="_blank">下载样例</a></p>
-      <input type="file" id="libFile" accept=".csv,text/csv">
-      <button onclick="uploadLib()">上传字库清单</button>
-      <div id="libMsg" class="msg"></div>
+      <h2>① 上传外字号清单（排版组）</h2>
+      <p class="muted">CSV 每行一个外字号，表头“外字号”（可无表头）。
+        <a href="/samples/cejia_d1_list.csv" target="_blank">下载样例</a></p>
+      <div class="row">
+        <div><label>册名</label><input type="text" id="listVol" placeholder="例如：册甲"></div>
+        <div><label>稿次（正整数）</label><input type="number" id="listDraft" min="1" value="1"></div>
+      </div>
+      <label>清单 CSV</label>
+      <input type="file" id="listFile" accept=".csv,text/csv">
+      <button onclick="upload('list')">上传清单</button>
+      <div id="listMsg" class="msg"></div>
     </div>
 
     <div class="card">
-      <h2>② 分册用字表</h2>
-      <p class="muted">CSV 列：字（可多行）。全量替换该册用字。
-        <a href="/samples/volume_a.csv" target="_blank">样例册甲</a> ·
-        <a href="/samples/volume_b.csv" target="_blank">样例册乙</a></p>
-      <label>册名</label>
-      <input type="text" id="volName" placeholder="例如：册甲">
-      <label>用字表 CSV</label>
-      <input type="file" id="volFile" accept=".csv,text/csv">
-      <button onclick="uploadVol()">上传用字表</button>
-      <div id="volMsg" class="msg"></div>
+      <h2>② 上传对照表（校勘组）</h2>
+      <p class="muted">CSV 每行“外字号,字”，字必须单字且不重复。
+        <a href="/samples/cejia_d1_mapping.csv" target="_blank">下载样例</a></p>
+      <div class="row">
+        <div><label>册名</label><input type="text" id="mapVol" placeholder="例如：册甲"></div>
+        <div><label>稿次（正整数）</label><input type="number" id="mapDraft" min="1" value="1"></div>
+      </div>
+      <label>对照表 CSV</label>
+      <input type="file" id="mapFile" accept=".csv,text/csv">
+      <button onclick="upload('mapping')">上传对照表</button>
+      <div id="mappingMsg" class="msg"></div>
     </div>
 
     <div class="card">
-      <h2>③ 交印出单</h2>
-      <label>册名</label>
-      <input type="text" id="submitName" placeholder="例如：册甲">
-      <label>幂等键（可选；同一键重复确认复用原单）</label>
-      <input type="text" id="idemKey" placeholder="留空则按 册+用字+原清单 自动判重">
-      <button onclick="submitVol()">交印并生成增减单</button>
-      <div id="submitMsg" class="msg"></div>
+      <h2>③ 原用字表（仅限未启用外字稿的分册）</h2>
+      <p class="muted">一旦该册启用外字稿，此入口即失效。
+        <a href="/samples/ceyi_legacy.csv" target="_blank">下载样例</a></p>
+      <label>册名</label><input type="text" id="legacyVol" placeholder="例如：册乙">
+      <label>原用字表 CSV</label>
+      <input type="file" id="legacyFile" accept=".csv,text/csv">
+      <button onclick="uploadLegacy()">上传原用字表</button>
+      <div id="legacyMsg" class="msg"></div>
     </div>
 
     <div class="card">
-      <h2>④ 按单号重取原单</h2>
-      <label>单号</label>
-      <input type="text" id="orderNo" placeholder="例如：MO20261120-000001">
-      <button class="ghost" onclick="fetchOrder()">查看 JSON</button>
-      <button class="ghost" onclick="downloadOrder()">下载 CSV</button>
-      <div id="orderMsg" class="msg"></div>
+      <h2>④ 交印（读取当前启用稿完整用字）</h2>
+      <label>册名</label><input type="text" id="printVol" placeholder="例如：册甲">
+      <button onclick="doPrint()">交印预览 JSON</button>
+      <button class="ghost" onclick="downloadPrint()">下载交印 CSV</button>
+      <div id="printMsg" class="msg"></div>
     </div>
 
     <div class="card">
       <h2>演示辅助</h2>
-      <button class="ghost" onclick="resetAll()">清空全部数据</button>
+      <button class="ghost" onclick="resetAll()">清空全部数据（含所有外字稿）</button>
       <button class="ghost" onclick="loadState()">刷新右侧状态</button>
     </div>
   </div>
 
   <div>
     <div class="card">
-      <h2>当前工位状态</h2>
-      <div id="stateBox"><p class="muted">点击“刷新右侧状态”加载。</p></div>
+      <h2>各册状态与当前启用稿次</h2>
+      <div id="stateBox"><p class="muted">加载中…</p></div>
     </div>
     <div class="card">
-      <h2>交印单（按生效次序）</h2>
-      <div id="ordersBox"><p class="muted">暂无。</p></div>
-    </div>
-    <div class="card">
-      <h2>最近一单 JSON 原文</h2>
-      <pre id="rawBox">（交印或重取后显示）</pre>
+      <h2>最近一次交印 JSON 原文</h2>
+      <pre id="rawBox">（交印后显示）</pre>
     </div>
   </div>
 </main>
@@ -125,106 +130,112 @@ function show(id, text, ok) {
   el.textContent = text;
   el.className = "msg " + (ok ? "ok" : "err");
 }
-async function post(url, formData, headers) {
-  const resp = await fetch(url, { method:"POST", body: formData, headers: headers || {} });
+async function postFile(url, file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  const resp = await fetch(url, { method:"POST", body: fd });
   const data = await resp.json();
   if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
   return data;
 }
-async function uploadLib() {
-  const f = document.getElementById("libFile").files[0];
-  if (!f) return show("libMsg", "请先选择 CSV 文件", false);
-  const fd = new FormData(); fd.append("file", f);
+function readInputs(prefix) {
+  const vol = document.getElementById(prefix + "Vol").value.trim();
+  const draft = parseInt(document.getElementById(prefix + "Draft").value, 10);
+  if (!vol) throw new Error("请填写册名");
+  if (!Number.isInteger(draft) || draft <= 0) throw new Error("稿次必须是正整数");
+  return { vol, draft };
+}
+async function upload(kind) {
+  const prefix = kind === "list" ? "list" : "map";
+  const msgId = kind === "list" ? "listMsg" : "mappingMsg";
+  const fileEl = document.getElementById(kind === "list" ? "listFile" : "mapFile");
   try {
-    const d = await post("/api/libraries", fd);
-    show("libMsg", `已替换字库清单：${d.library_count} 个字库、${d.glyph_count} 个字模`, true);
+    const { vol, draft } = readInputs(prefix);
+    const f = fileEl.files[0];
+    if (!f) return show(msgId, "请先选择 CSV 文件", false);
+    const d = await postFile(
+      `/api/volumes/${encodeURIComponent(vol)}/drafts/${draft}/${kind}`, f);
+    const lines = [d.message];
+    lines.push(`稿次 ${d.draft_no} 状态：${statusLabel(d.draft.status)}` +
+      `（清单 ${d.draft.list_count} 行 / 对照表 ${d.draft.mapping_count} 行）`);
+    if (d.draft.missing_codes.length)
+      lines.push("待补编号：" + d.draft.missing_codes.join("、"));
+    lines.push("当前启用稿次：" + (d.active_draft_no ?? "无"));
+    show(msgId, lines.join("\n"), true);
     loadState();
-  } catch (e) { show("libMsg", e.message, false); }
+  } catch (e) { show(msgId, e.message, false); }
 }
-async function uploadVol() {
-  const name = document.getElementById("volName").value.trim();
-  const f = document.getElementById("volFile").files[0];
-  if (!name || !f) return show("volMsg", "请填写册名并选择 CSV 文件", false);
-  const fd = new FormData(); fd.append("file", f);
+async function uploadLegacy() {
+  const vol = document.getElementById("legacyVol").value.trim();
+  const f = document.getElementById("legacyFile").files[0];
   try {
-    const d = await post(`/api/volumes/${encodeURIComponent(name)}/chars`, fd);
-    show("volMsg", `册「${d.volume}」用字表已更新，共 ${d.char_count} 个字`, true);
+    if (!vol) return show("legacyMsg", "请填写册名", false);
+    if (!f) return show("legacyMsg", "请先选择 CSV 文件", false);
+    const d = await postFile(`/api/volumes/${encodeURIComponent(vol)}/legacy`, f);
+    show("legacyMsg", d.message + `（共 ${d.char_count} 字）`, true);
     loadState();
-  } catch (e) { show("volMsg", e.message, false); }
+  } catch (e) { show("legacyMsg", e.message, false); }
 }
-async function submitVol() {
-  const name = document.getElementById("submitName").value.trim();
-  if (!name) return show("submitMsg", "请填写册名", false);
-  const key = document.getElementById("idemKey").value.trim();
-  const headers = {};
-  if (key) headers["Idempotency-Key"] = key;
+async function doPrint() {
+  const vol = document.getElementById("printVol").value.trim();
+  if (!vol) return show("printMsg", "请填写册名", false);
   try {
-    const d = await post(`/api/volumes/${encodeURIComponent(name)}/submit`,
-                         new FormData(), headers);
-    const head = (d.reused ? "♻ 复用原单 " : "✦ 新生效单 ") + d.order_no +
-                 `（册「${d.volume}」）\n`;
-    const lines = [head,
-      `增 ${d.added.length} 个：` + d.added.map(x =>
-        `${x.glyph_char}[${x.library_name}/${x.edition}/${x.matrix_no}]`).join("、"),
-      `减 ${d.removed.length} 个：` + d.removed.map(x =>
-        `${x.glyph_char}[${x.library_name}/${x.edition}/${x.matrix_no}]`).join("、"),
-      `共需字模：${d.pool_before.length} → ${d.pool_after.length}`];
-    show("submitMsg", lines.join("\n"), true);
-    document.getElementById("rawBox").textContent = JSON.stringify(d, null, 2);
-    loadState(); loadOrders();
-  } catch (e) { show("submitMsg", e.message, false); }
-}
-async function fetchOrder() {
-  const no = document.getElementById("orderNo").value.trim();
-  if (!no) return show("orderMsg", "请填写单号", false);
-  try {
-    const resp = await fetch(`/api/orders/${encodeURIComponent(no)}`);
+    const resp = await fetch(`/api/volumes/${encodeURIComponent(vol)}/print`,
+                             { method:"POST" });
     const d = await resp.json();
     if (!resp.ok) throw new Error(d.error);
-    show("orderMsg", `已重取单号 ${d.order_no}，内容与原单一致`, true);
+    show("printMsg",
+      `交印单 ${d.job_id}\n册「${d.volume}」读取启用稿次 ${d.active_draft_no}` +
+      `，共 ${d.code_count} 个外字号\n完整用字：${d.full_text}`, true);
     document.getElementById("rawBox").textContent = JSON.stringify(d, null, 2);
-  } catch (e) { show("orderMsg", e.message, false); }
+  } catch (e) { show("printMsg", e.message, false); }
 }
-function downloadOrder() {
-  const no = document.getElementById("orderNo").value.trim();
-  if (!no) return show("orderMsg", "请填写单号", false);
-  window.open(`/api/orders/${encodeURIComponent(no)}/download`, "_blank");
+function downloadPrint() {
+  const vol = document.getElementById("printVol").value.trim();
+  if (!vol) return show("printMsg", "请填写册名", false);
+  window.open(`/api/volumes/${encodeURIComponent(vol)}/print/download`, "_blank");
 }
 async function resetAll() {
   await fetch("/api/reset", { method:"POST" });
-  loadState(); loadOrders();
+  loadState();
 }
-function ident(x) { return `${x.glyph_char}（${x.library_name}/${x.edition}/${x.matrix_no}）`; }
+function statusLabel(s) {
+  return { active:"已启用", pending:"待补", superseded:"已作废" }[s] || s;
+}
 async function loadState() {
   const d = await (await fetch("/api/state")).json();
   const box = document.getElementById("stateBox");
-  let html = `<p class="muted">当前生效字库：${d.libraries.map(l =>
-      `${l.name}·${l.edition}(优先级${l.priority})`).join(" → ") || "（未上传）"}</p>`;
+  if (!d.volumes.length) {
+    box.innerHTML = "<p class='muted'>暂无分册。请先在左侧上传清单或对照表。</p>";
+    return;
+  }
+  let html = "";
   for (const v of d.volumes) {
-    html += `<div class="vol"><h3>册「${v.volume}」</h3>
-      <div class="chars">用字：${v.chars.join("")}</div>
-      <div class="muted">已交印字模 ${v.active_matrices.length} 个：${
-        v.active_matrices.map(ident).join("；") || "（尚未交印）"}</div></div>`;
+    html += `<div class="vol"><h3>册「${v.volume}」 · 当前启用稿次：` +
+      `<b>${v.active_draft_no ?? "无"}</b></h3>`;
+    if (v.active_full_text)
+      html += `<div class="chars">启用稿完整用字：${v.active_full_text}</div>`;
+    if (v.legacy_table)
+      html += `<div class="muted">原用字表（${v.legacy_table.uploaded_at}）：` +
+        `${v.legacy_table.content}</div>`;
+    html += "<table><tr><th>稿次</th><th>状态</th><th>清单</th><th>对照表</th>" +
+      "<th>待补提示</th></tr>";
+    for (const dr of v.drafts) {
+      const tips = [];
+      if (dr.missing_tables.length) tips.push("缺表：" + dr.missing_tables.join("、"));
+      if (dr.missing_codes.length) tips.push("缺编号：" + dr.missing_codes.join("、"));
+      html += `<tr><td>${dr.draft_no}</td>` +
+        `<td><span class="tag ${dr.status}">${statusLabel(dr.status)}</span></td>` +
+        `<td>${dr.has_list ? dr.list_count + " 行" : "—"}</td>` +
+        `<td>${dr.has_mapping ? dr.mapping_count + " 行" : "—"}</td>` +
+        `<td class="muted">${tips.join("；") || "齐全"}</td></tr>`;
+    }
+    html += "</table></div>";
   }
-  html += `<p><b>各册共需字模并集（${d.shared_pool.length} 个）：</b><br>` +
-    d.shared_pool.map(ident).join("；") + "</p>";
-  box.innerHTML = html || "<p class='muted'>暂无数据。</p>";
+  box.innerHTML = html;
 }
-async function loadOrders() {
-  const d = await (await fetch("/api/orders")).json();
-  const box = document.getElementById("ordersBox");
-  if (!d.length) { box.innerHTML = "<p class='muted'>暂无。</p>"; return; }
-  let html = "<table><tr><th>生效序</th><th>单号</th><th>册</th><th>增</th><th>减</th><th>操作</th></tr>";
-  for (const o of d) {
-    html += `<tr><td>${o.seq}</td><td>${o.order_no}</td><td>${o.volume}</td>
-      <td><span class="tag add">+${o.added_count}</span></td>
-      <td><span class="tag del">-${o.removed_count}</span></td>
-      <td><a href="/api/orders/${o.order_no}/download">CSV</a> ·
-      <a href="javascript:void(0)" onclick="document.getElementById('orderNo').value='${o.order_no}';fetchOrder()">JSON</a></td></tr>`;
-  }
-  box.innerHTML = html + "</table>";
-}
-loadState(); loadOrders();
+loadState();
+setInterval(loadState, 10000);
 </script>
 </body>
 </html>

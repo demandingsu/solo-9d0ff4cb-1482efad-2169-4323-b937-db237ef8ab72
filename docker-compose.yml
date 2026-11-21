@@ -1,15 +1,15 @@
 services:
-  matrix-station:
+  glyph-drafts:
     build: .
-    image: matrix-station:latest
-    container_name: matrix-station
+    image: glyph-drafts:latest
+    container_name: glyph-drafts
     ports:
       - "8000:8000"
     environment:
-      MATRIX_DB_PATH: /data/matrix.db
+      GLYPH_DB_PATH: /data/glyph.db
     volumes:
-      - matrix-data:/data
+      - glyph-data:/data
     restart: unless-stopped
 
 volumes:
-  matrix-data:
+  glyph-data:

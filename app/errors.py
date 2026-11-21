@@ -3,7 +3,7 @@ from __future__ import annotations
 
 
 class DomainError(Exception):
-    """业务校验失败（缺字、文件格式错、资源不存在等），HTTP 400/404。"""
+    """业务校验失败（文件格式错、缺表、状态不允许等），HTTP 400/404/409/422。"""
 
     def __init__(self, message: str, status_code: int = 400):
         super().__init__(message)
@@ -11,16 +11,8 @@ class DomainError(Exception):
         self.status_code = status_code
 
 
-class MissingGlyphError(DomainError):
-    """存在没有任何字库收录的字，无法交印。"""
-
-    def __init__(self, missing: list[str]):
-        self.missing = missing
-        super().__init__(f"缺字（无任何字库收录）: {''.join(missing)}", 422)
-
-
 class SaveError(DomainError):
-    """保存失败：事务回滚，各册仍沿用原清单。"""
+    """写入失败：事务回滚，原稿与待补记录均保持不变，重启后可继续补传。"""
 
-    def __init__(self, message: str = "保存失败，已回滚，仍沿用原清单"):
+    def __init__(self, message: str = "写入失败，已回滚，原稿与待补记录保持不变"):
         super().__init__(message, 500)
